@@ -1,5 +1,6 @@
 A simple music bot for Discord.
-```Music:
+```
+Music:
   pause Pauses.
   play  Plays from a url (almost anything youtube_dl supports).
   queue Shows the current queue.
