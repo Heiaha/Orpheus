@@ -23,6 +23,7 @@ ytdl_format_options = {
 }
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
+EMBED_COLOR = 0xa84300
 
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -69,7 +70,8 @@ class Music(commands.Cog):
                 ctx.voice_client.play(curr_song, after=lambda e: print(f'Player error: {e}') if e else None)
 
                 embed = discord.Embed(description=f'Now playing: [{curr_song.title}]({curr_song.url})',
-                                      timestamp=datetime.datetime.utcnow())
+                                      timestamp=datetime.datetime.utcnow(),
+                                      color=EMBED_COLOR)
                 embed.add_field(name='Duration:', value=curr_song.duration)
                 embed.add_field(name='Requested by:', value=curr_song.author.mention)
                 embed.set_thumbnail(url=curr_song.thumbnail_url)
@@ -85,6 +87,7 @@ class Music(commands.Cog):
     async def play(self, ctx, *, search_str: str=None):
         """Plays from a url (almost anything youtube_dl supports)."""
 
+        print(f'{ctx.author} requested a song with string {search_str}.')
         if ctx.author.voice:
             if ctx.voice_client is None:
                 await ctx.author.voice.channel.connect()
@@ -100,7 +103,8 @@ class Music(commands.Cog):
             self.playlists[ctx.guild.id].append(song)
             if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
                 embed = discord.Embed(description=f'Added to queue: [{song.title}]({song.url})',
-                                      timestamp=datetime.datetime.utcnow())
+                                      timestamp=datetime.datetime.utcnow(),
+                                      color=EMBED_COLOR)
                 embed.add_field(name='Duration:', value=song.duration)
                 embed.add_field(name='Requested by:', value=self.curr_songs[ctx.guild.id].author.mention)
                 embed.set_thumbnail(url=song.thumbnail_url)
@@ -112,11 +116,13 @@ class Music(commands.Cog):
     @commands.command()
     async def pause(self, ctx):
         """Pauses."""
+        print(f'{ctx.author} paused.')
         ctx.voice_client.pause()
 
     @commands.command()
     async def stop(self, ctx):
         """Stops, clears the queue, and disconnects the bot from voice"""
+        print(f'{ctx.author} stop.')
         self.playlists.pop(ctx.guild.id, None)
         self.curr_songs.pop(ctx.guild.id, None)
         ctx.voice_client.stop()
@@ -125,25 +131,18 @@ class Music(commands.Cog):
     @commands.command()
     async def skip(self, ctx):
         """Skips the song at the front of the queue."""
+        print(f'{ctx.author} skipped.')
         ctx.voice_client.stop()
         if len(self.playlists[ctx.guild.id]) == 0:
             await ctx.voice_client.disconnect()
 
     @commands.command()
-    async def volume(self, ctx, volume: int):
-        """Changes the player's volume"""
-
-        if ctx.voice_client is None:
-            return await ctx.reply("Not connected to a voice channel.")
-
-        ctx.voice_client.source.volume = volume / 100
-        await ctx.reply(f"Changed volume to ```{volume}```%")
-
-    @commands.command()
     async def queue(self, ctx):
         """Shows the current queue."""
+        print(f'{ctx.author} requested the queue.')
         embed = discord.Embed(description='Current queue:',
-                              timestamp=datetime.datetime.utcnow())
+                              timestamp=datetime.datetime.utcnow(),
+                              color=EMBED_COLOR)
         curr_song = self.curr_songs.get(ctx.guild.id)
         if curr_song:
             embed.add_field(name=f'Now {"paused" if ctx.voice_client.is_paused() else "playing"}:',
