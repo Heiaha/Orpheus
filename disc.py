@@ -117,7 +117,8 @@ class Music(commands.Cog):
     async def pause(self, ctx):
         """Pauses."""
         print(f'{ctx.author} paused.')
-        ctx.voice_client.pause()
+        if ctx.voice_client is not None:
+            ctx.voice_client.pause()
 
     @commands.command()
     async def stop(self, ctx):
@@ -125,16 +126,18 @@ class Music(commands.Cog):
         print(f'{ctx.author} stopped.')
         self.playlists.pop(ctx.guild.id, None)
         self.curr_songs.pop(ctx.guild.id, None)
-        ctx.voice_client.stop()
-        await ctx.voice_client.disconnect()
+        if ctx.voice_client is not None:
+            ctx.voice_client.stop()
+            await ctx.voice_client.disconnect()
 
     @commands.command()
     async def skip(self, ctx):
         """Skips the song at the front of the queue."""
         print(f'{ctx.author} skipped.')
-        ctx.voice_client.stop()
-        if len(self.playlists[ctx.guild.id]) == 0:
-            await ctx.voice_client.disconnect()
+        if ctx.voice_client is not None:
+            ctx.voice_client.stop()
+            if len(self.playlists[ctx.guild.id]) == 0:
+                await ctx.voice_client.disconnect()
 
     @commands.command()
     async def queue(self, ctx):
