@@ -9,7 +9,6 @@ import random
 
 from discord.ext import commands
 
-
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -24,10 +23,9 @@ ytdl_format_options = {
     'source_address': '0.0.0.0'  # bind to ipv4 since ipv6 addresses cause issues sometimes
 }
 FFMPEG_OPTIONS = {
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-        'options': '-vn',
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn',
 }
-
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 EMBED_COLOR = 0xa84300
@@ -58,7 +56,7 @@ class SongQueue(asyncio.Queue):
 
 
 class Song(discord.PCMVolumeTransformer):
-    def __init__(self, ctx, source, *, data, volume=0.5):
+    def __init__(self, ctx: commands.Context, source: discord.FFmpegPCMAudio, *, data: dict, volume: float = 0.5):
         super().__init__(source, volume)
 
         self.title = data.get('title')
@@ -87,7 +85,8 @@ class Song(discord.PCMVolumeTransformer):
                     data = entry
                     break
         if data['is_live']:
-            await ctx.reply('Youtube is giving me back live videos, which I can\'t currently deal with. Try a different search string or give me a url.')
+            await ctx.reply(
+                'Youtube is giving me back live videos, which I can\'t currently deal with. Try a different search string or give me a url.')
             raise ValueError('Live stream')
         return cls(ctx, discord.FFmpegPCMAudio(data['url'], **FFMPEG_OPTIONS), data=data)
 
@@ -173,6 +172,7 @@ class Music(commands.Cog):
 
     @commands.command()
     async def join(self, ctx: commands.Context):
+        """Join the current voice channel."""
         if ctx.author.voice:
             if ctx.voice_client is None:
                 await ctx.author.voice.channel.connect()
@@ -183,8 +183,8 @@ class Music(commands.Cog):
             raise commands.CommandError("Author not connected to a voice channel.")
 
     @commands.command()
-    async def play(self, ctx, *, search: str):
-        """Plays from a url (almost anything youtube_dl supports)."""
+    async def play(self, ctx: commands.Context, *, search: str):
+        """Joins your voice channel and plays from a search string (almost anything youtube_dl supports)."""
 
         print(f'{ctx.author} requested a song with string \"{search}\".')
 
@@ -195,7 +195,7 @@ class Music(commands.Cog):
         await self.players[ctx.guild.id].add(song, ctx)
 
     @commands.command()
-    async def stop(self, ctx):
+    async def stop(self, ctx: commands.Context):
         """Stops, clears the queue, and disconnects the bot from voice"""
         print(f'{ctx.author} stopped.')
         if player := self.players.get(ctx.guild.id):
@@ -206,33 +206,34 @@ class Music(commands.Cog):
             await ctx.voice_client.disconnect()
 
     @commands.command()
-    async def skip(self, ctx):
+    async def skip(self, ctx: commands.Context):
         """Skips the song at the front of the queue."""
         print(f'{ctx.author} skipped.')
         self.player(ctx).skip()
         await ctx.message.add_reaction('✅')
 
     @commands.command()
-    async def shuffle(self, ctx):
-
+    async def shuffle(self, ctx: commands.Context):
+        """Shuffles the queue."""
         player = self.player(ctx)
         player.queue.shuffle()
         await ctx.message.add_reaction('✅')
 
     @commands.command()
-    async def clear(self, ctx):
+    async def clear(self, ctx: commands.Context):
+        """Clears the queue."""
         player = self.player(ctx)
         player.queue.clear()
 
-
     @commands.command()
     async def remove(self, ctx: commands.Context, idx: int):
+        """Removes the given number from the queue."""
         player = self.player(ctx)
         player.queue.remove(idx - 1)
         await ctx.message.add_reaction('✅')
 
     @commands.command()
-    async def queue(self, ctx, page: int = 1):
+    async def queue(self, ctx: commands.Context, page: int = 1):
         """Shows the current queue."""
         print(f'{ctx.author} requested the queue.')
 
@@ -272,7 +273,7 @@ bot.add_cog(Music(bot))
 
 
 @bot.check
-async def message_check(ctx):
+async def message_check(ctx: commands.Context):
     return ctx.channel.name == 'orpheus' and ctx.message.guild is not None
 
 
@@ -284,6 +285,7 @@ async def on_ready():
 @bot.event
 async def on_command_error(ctx: commands.Context, exception: Exception):
     await ctx.author.send(f'I ran into an exception!\n```{exception}```')
+
 
 if __name__ == '__main__':
     bot.run(secrets.DISCORD_TOKEN)
