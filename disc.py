@@ -138,18 +138,17 @@ class Player:
             try:
                 self.current = await asyncio.wait_for(self.queue.get(), timeout=300)
             except asyncio.TimeoutError:
+                await self.voice.disconnect()
                 await self.stop()
-                del self
                 return
             await self.current.channel.send(embed=self.current.embed(state='playing'))
             self.voice.play(self.current, after=lambda e: self.next.set())
             await self.next.wait()
 
     async def stop(self):
-        self.current = None
         self.queue.clear()
-        if self.voice:
-            self.voice = None
+        if self.voice.is_playing():
+            self.voice.stop()
 
     def skip(self):
         self.current = None
@@ -190,7 +189,8 @@ class Music(commands.Cog):
 
         song = await Song.from_search(ctx, search, loop=self.bot.loop, stream=True)
         await ctx.invoke(self.join)
-        if not self.players.get(ctx.guild.id):
+        player = self.player(ctx)
+        if not player or len(player.queue) == 0:
             self.players[ctx.guild.id] = Player(bot, ctx)
         await self.players[ctx.guild.id].add(song, ctx)
 
