@@ -87,7 +87,7 @@ class Music(commands.Cog):
     async def play(self, ctx, *, search_str: str=None):
         """Plays from a url (almost anything youtube_dl supports)."""
 
-        print(f'{ctx.author} requested a song with string {search_str}.')
+        print(f'{ctx.author} requested a song with string \"{search_str}\".')
         if ctx.author.voice:
             if ctx.voice_client is None:
                 await ctx.author.voice.channel.connect()
@@ -101,7 +101,7 @@ class Music(commands.Cog):
         if search_str:
             song = await YTDLSource.from_url(search_str, loop=self.bot.loop, author=ctx.author, stream=True)
             self.playlists[ctx.guild.id].append(song)
-            if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+            if ctx.voice_client is not None and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
                 embed = discord.Embed(description=f'Added to queue: [{song.title}]({song.url})',
                                       timestamp=datetime.datetime.utcnow(),
                                       color=EMBED_COLOR)
@@ -122,7 +122,7 @@ class Music(commands.Cog):
     @commands.command()
     async def stop(self, ctx):
         """Stops, clears the queue, and disconnects the bot from voice"""
-        print(f'{ctx.author} stop.')
+        print(f'{ctx.author} stopped.')
         self.playlists.pop(ctx.guild.id, None)
         self.curr_songs.pop(ctx.guild.id, None)
         ctx.voice_client.stop()
