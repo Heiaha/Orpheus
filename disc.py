@@ -77,7 +77,7 @@ class Music(commands.Cog):
                 embed.set_thumbnail(url=curr_song.thumbnail_url)
                 embed.set_footer(text=self.bot.user.display_name, icon_url=self.bot.user.avatar_url)
 
-                await ctx.reply(embed=embed)
+                await ctx.send(embed=embed)
             await asyncio.sleep(1)
 
         self.curr_songs.pop(ctx.guild.id, None)
@@ -109,7 +109,7 @@ class Music(commands.Cog):
                 embed.add_field(name='Requested by:', value=self.curr_songs[ctx.guild.id].author.mention)
                 embed.set_thumbnail(url=song.thumbnail_url)
                 embed.set_footer(text=self.bot.user.display_name, icon_url=self.bot.user.avatar_url)
-                await ctx.reply(embed=embed)
+                await ctx.send(embed=embed)
 
             self.bot.loop.create_task(self._play(ctx))
 
@@ -160,7 +160,7 @@ class Music(commands.Cog):
 
         embed.add_field(name='Up next:', value=playlist_str if playlist_str else None, inline=False)
         embed.set_footer(text=self.bot.user.display_name, icon_url=self.bot.user.avatar_url)
-        await ctx.reply(embed=embed)
+        await ctx.send(embed=embed)
 
     @tasks.loop(minutes=5)
     async def check_leave(self):
