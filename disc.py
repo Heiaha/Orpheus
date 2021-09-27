@@ -1,12 +1,12 @@
 import datetime
-from collections import defaultdict
-
 import discord
 import youtube_dl
 import asyncio
 import secrets
 
 from discord.ext import commands, tasks
+from collections import defaultdict
+
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -31,7 +31,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         super().__init__(source, volume)
 
         self.title = data.get('title')
-        self.video_ = data.get('url')
+        self.video = data.get('url')
         self.url = data.get('webpage_url')
         self.thumbnail_url = data.get('thumbnails')[-1].get('url')
         self.duration = datetime.timedelta(seconds=data.get('duration'))
