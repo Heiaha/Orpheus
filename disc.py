@@ -181,8 +181,7 @@ async def message_check(ctx):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
-    print('------')
+    print(f'Logged in as {bot.user}')
     music_cog = bot.get_cog('Music')
     await music_cog.on_ready()
 
