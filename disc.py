@@ -190,7 +190,7 @@ class Music(commands.Cog):
         song = await Song.from_search(ctx, search, loop=self.bot.loop, stream=True)
         await ctx.invoke(self.join)
         player = self.player(ctx)
-        if not player or len(player.queue) == 0:
+        if not player:
             self.players[ctx.guild.id] = Player(bot, ctx)
         await self.players[ctx.guild.id].add(song, ctx)
 
