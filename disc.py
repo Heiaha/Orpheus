@@ -290,4 +290,4 @@ async def on_command_error(ctx: commands.Context, exception: Exception):
 
 
 if __name__ == '__main__':
-    bot.run(secrets.DISCORD_TOKEN)
+    bot.run(ORPHEUS_DISCORD_TOKEN)
