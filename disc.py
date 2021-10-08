@@ -3,7 +3,6 @@ import datetime
 import discord
 import youtube_dl
 import asyncio
-import secrets
 import math
 import itertools
 import random
