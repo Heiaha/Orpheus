@@ -1,3 +1,4 @@
+import os
 import datetime
 import discord
 import youtube_dl
@@ -8,6 +9,8 @@ import itertools
 import random
 
 from discord.ext import commands
+
+ORPHEUS_DISCORD_TOKEN = os.environ.get("ORPHEUS_DISCORD_TOKEN")
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
