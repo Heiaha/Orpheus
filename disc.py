@@ -11,6 +11,7 @@ from discord.ext import commands
 
 ORPHEUS_DISCORD_TOKEN = os.environ.get("ORPHEUS_DISCORD_TOKEN")
 
+
 ytdl_format_options = {
     "format": "bestaudio/best",
     "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
@@ -54,7 +55,7 @@ class SongQueue(asyncio.Queue):
         random.shuffle(self._queue)
 
     def remove(self, index: int):
-        del self._queue[index]
+        self._queue.pop(index)
 
 
 class Song(discord.PCMVolumeTransformer):
@@ -107,7 +108,7 @@ class Song(discord.PCMVolumeTransformer):
     def embed(self, *, state):
         """Create an embed with state in {'playing', 'queued'}"""
         if state not in ("playing", "queued"):
-            raise ValueError
+            raise ValueError("Embed must state must be in (playing, queued).")
 
         return (
             discord.Embed(
@@ -130,17 +131,19 @@ class Song(discord.PCMVolumeTransformer):
 
         if hours > 0:
             duration.append(f"{hours}".rjust(2, "0"))
-        if minutes > 0:
-            duration.append(f"{minutes}".rjust(2, "0"))
-        if seconds > 0:
-            duration.append(f"{seconds}".rjust(2, "0"))
+
+        duration.append(f"{minutes}".rjust(2, "0"))
+        duration.append(f"{seconds}".rjust(2, "0"))
 
         return ":".join(duration)
 
 
 class Player:
-    def __init__(self, bot: commands.Bot, ctx: commands.Context):
-        self.bot = bot
+
+    _players = {}
+
+    def __init__(self, ctx: commands.Context):
+        self.bot = ctx.bot
         self.ctx = ctx
 
         self.current = None
@@ -150,6 +153,12 @@ class Player:
 
         self.task = self.bot.loop.create_task(self.play())
 
+        self._players[ctx.guild.id] = self
+
+    @classmethod
+    def player(cls, ctx: commands.Context):
+        return cls._players.get(ctx.guild.id) or cls(ctx)
+
     async def play(self):
         while True:
             self.next.clear()
@@ -157,16 +166,17 @@ class Player:
                 self.current = await asyncio.wait_for(self.queue.get(), timeout=300)
             except asyncio.TimeoutError:
                 await self.voice.disconnect()
-                await self.stop()
+                self.stop()
                 return
             await self.current.channel.send(embed=self.current.embed(state="playing"))
             self.voice.play(self.current, after=lambda e: self.next.set())
             await self.next.wait()
 
-    async def stop(self):
+    def stop(self):
         self.queue.clear()
         if self.voice.is_playing():
             self.voice.stop()
+        self._players.pop(self.ctx.guild.id, None)
 
     def skip(self):
         self.current = None
@@ -185,7 +195,6 @@ class Player:
 class Music(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.players = {}
 
     @commands.command()
     async def join(self, ctx: commands.Context):
@@ -194,6 +203,8 @@ class Music(commands.Cog):
             if ctx.voice_client is None:
                 await ctx.author.voice.channel.connect()
             elif ctx.voice_client.channel != ctx.author.voice.channel:
+                player = Player.player(ctx)
+                player.stop()
                 await ctx.voice_client.move_to(ctx.author.voice.channel)
         else:
             await ctx.reply("You are not connected to a voice channel.")
@@ -207,18 +218,15 @@ class Music(commands.Cog):
 
         song = await Song.from_search(ctx, search, loop=self.bot.loop, stream=True)
         await ctx.invoke(self.join)
-        player = self.player(ctx)
-        if not player:
-            self.players[ctx.guild.id] = Player(bot, ctx)
-        await self.players[ctx.guild.id].add(song, ctx)
+        player = Player.player(ctx)
+        await player.add(song, ctx)
 
     @commands.command()
     async def stop(self, ctx: commands.Context):
         """Stops, clears the queue, and disconnects the bot from voice"""
         print(f"{ctx.author} stopped.")
-        if player := self.players.get(ctx.guild.id):
-            await player.stop()
-            del self.players[ctx.guild.id]
+        if player := Player.player(ctx):
+            player.stop()
         await ctx.message.add_reaction("✅")
         if ctx.voice_client:
             await ctx.voice_client.disconnect()
@@ -227,26 +235,26 @@ class Music(commands.Cog):
     async def skip(self, ctx: commands.Context):
         """Skips the song at the front of the queue."""
         print(f"{ctx.author} skipped.")
-        self.player(ctx).skip()
+        Player.player(ctx).skip()
         await ctx.message.add_reaction("✅")
 
     @commands.command()
     async def shuffle(self, ctx: commands.Context):
         """Shuffles the queue."""
-        player = self.player(ctx)
+        player = Player.player(ctx)
         player.queue.shuffle()
         await ctx.message.add_reaction("✅")
 
     @commands.command()
     async def clear(self, ctx: commands.Context):
         """Clears the queue."""
-        player = self.player(ctx)
+        player = Player.player(ctx)
         player.queue.clear()
 
     @commands.command()
     async def remove(self, ctx: commands.Context, idx: int):
         """Removes the given number from the queue."""
-        player = self.player(ctx)
+        player = Player.player(ctx)
         player.queue.remove(idx - 1)
         await ctx.message.add_reaction("✅")
 
@@ -255,7 +263,7 @@ class Music(commands.Cog):
         """Shows the current queue."""
         print(f"{ctx.author} requested the queue.")
 
-        player = self.player(ctx)
+        player = Player.player(ctx)
         embed = discord.Embed(
             description=f"Current queue:",
             timestamp=datetime.datetime.utcnow(),
@@ -283,9 +291,6 @@ class Music(commands.Cog):
         embed.add_field(name="Up next:", value=queue_str, inline=False)
         embed.set_footer(text=f"Page {page}/{pages}", icon_url=self.bot.user.avatar_url)
         await ctx.reply(embed=embed)
-
-    def player(self, ctx: commands.Context):
-        return self.players.get(ctx.guild.id)
 
 
 bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"))
