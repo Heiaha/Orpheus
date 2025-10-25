@@ -34,7 +34,7 @@ YTDL_OPTS = {
 }
 FFMPEG_BEFORE = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 EMBED_COLOR = 0xA84300
-IDLE_TIMEOUT = 10  # seconds
+IDLE_TIMEOUT = 600  # seconds
 
 ytdl = YoutubeDL(YTDL_OPTS)
 
