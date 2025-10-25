@@ -1,8 +1,8 @@
 import asyncio
-import datetime
 import math
 import os
 import random
+from urllib.parse import urlparse, parse_qs
 
 import discord
 from discord.ext import commands
@@ -36,10 +36,16 @@ def fmt_duration(seconds: int) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
-async def build_source(url: str) -> discord.AudioSource:
-    return await discord.FFmpegOpusAudio.from_probe(
-        url, before_options=FFMPEG_BEFORE, options="-vn"
-    )
+
+def clean_yt_watch_url(url: str) -> str:
+    """Strip playlist params from YouTube watch URLs."""
+    if "youtube.com/watch" in url:
+        q = parse_qs(urlparse(url).query)
+        v = q.get("v", [None])[0]
+        if v:
+            return f"https://www.youtube.com/watch?v={v}"
+    return url
+
 
 
 class Song:
@@ -57,6 +63,7 @@ class Song:
 
     @classmethod
     async def from_search(cls, ctx: commands.Context, query: str) -> "Song":
+        query = clean_yt_watch_url(query)
         loop = asyncio.get_running_loop()
         info = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
         if not info:
