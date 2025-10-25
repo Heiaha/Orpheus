@@ -1,0 +1,21 @@
+services:
+  worker:
+    build: .
+    environment:
+      DISCORD_FORCE_IPV4: "1"
+    container_name: orpheus
+    env_file: .env
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
