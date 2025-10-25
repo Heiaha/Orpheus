@@ -69,11 +69,14 @@ class Song:
         if not info:
             raise commands.CommandError(f"No results for `{query}`")
 
-        data = info.get("entries") or info
-        if isinstance(data, dict) and data.get("entries"):
-            data = next((e for e in data["entries"] if e), None)
-        if not data:
-            raise commands.CommandError(f"No playable result for `{query}`")
+        data = info.get("entries")
+        if data is None:
+            data = info
+        else:
+            for entry in data:
+                if entry:
+                    data = entry
+                    break
 
         if data.get("is_live"):
             raise commands.CommandError("Live streams are not supported.")
