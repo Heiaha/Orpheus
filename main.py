@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import math
 import os
 import random
@@ -8,6 +9,12 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("orpheus")
 
 load_dotenv()
 
@@ -25,7 +32,7 @@ YTDL_OPTS = {
 }
 FFMPEG_BEFORE = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 EMBED_COLOR = 0xA84300
-IDLE_TIMEOUT = 300  # seconds
+IDLE_TIMEOUT = 10  # seconds
 
 ytdl = YoutubeDL(YTDL_OPTS)
 
@@ -106,11 +113,14 @@ class Song:
 class Player:
     def __init__(self, ctx: commands.Context):
         self.bot = ctx.bot
-        self.guild_id = ctx.guild.id
+        self.guild = ctx.guild
         self.voice_client: discord.VoiceClient | None = ctx.voice_client
         self.queue: asyncio.Queue[Song] = asyncio.Queue()
         self.current: Song | None = None
-        self._next = asyncio.Event()
+        self._next: asyncio.Event = asyncio.Event()
+        self.task: asyncio.Task | None = None
+
+    def start(self):
         self.task = self.bot.loop.create_task(self._runner())
 
     async def _runner(self):
@@ -122,6 +132,7 @@ class Player:
                 except asyncio.TimeoutError:
                     if self.voice_client and self.voice_client.is_connected():
                         await self.voice_client.disconnect(force=True)
+                        logger.info(f"Disconnected from voice channel in {self.guild.name} due to inactivity")
                     return
 
                 await self.current.channel.send(embed=self.current.embed("playing"))
@@ -133,6 +144,7 @@ class Player:
                     self.bot.loop.call_soon_threadsafe(self._next.set)
 
                 if not self.voice_client or not self.voice_client.is_connected():
+                    logger.warning(f"Disconnected from voice channel in {self.guild.name} unexpectedly")
                     # voice lost mid-loop; bail
                     return
 
@@ -186,33 +198,41 @@ class Music(commands.Cog):
 
     @commands.command()
     async def join(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used join in {ctx.guild.name}")
         await self.ensure_voice(ctx)
         await ctx.message.add_reaction("✅")
 
     @commands.command()
     async def play(self, ctx: commands.Context, *, query: str):
-        print(f'{ctx.author} requested "{query}"')
+        logger.info(f"{ctx.author.name} used play in {ctx.guild.name} with query: {query!r}")
         await self.ensure_voice(ctx)
         song = await Song.from_search(ctx, query)
         player = self.players.setdefault(ctx.guild.id, Player(ctx))
         await player.add(song)
+
+        if not player.task or player.task.done():
+            player.start()
+
         if ctx.voice_client and ctx.voice_client.is_playing():
             await ctx.reply(embed=song.embed("queued"))
 
     @commands.command()
     async def pause(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used pause in {ctx.guild.name}")
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.pause()
             await ctx.message.add_reaction("⏸️")
 
     @commands.command()
     async def resume(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used resume in {ctx.guild.name}")
         if ctx.voice_client and ctx.voice_client.is_paused():
             ctx.voice_client.resume()
             await ctx.message.add_reaction("▶️")
 
     @commands.command()
     async def skip(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used skip in {ctx.guild.name}")
         player = self.players.get(ctx.guild.id)
         if player:
             player.skip()
@@ -220,6 +240,7 @@ class Music(commands.Cog):
 
     @commands.command()
     async def stop(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used stop in {ctx.guild.name}")
         player = self.players.pop(ctx.guild.id, None)
         if player:
             player.cancel()
@@ -229,6 +250,7 @@ class Music(commands.Cog):
 
     @commands.command(name="queue")
     async def _queue(self, ctx: commands.Context, page: int = 1):
+        logger.info(f"{ctx.author.name} used queue in {ctx.guild.name}")
         player = self.players.get(ctx.guild.id)
         embed = discord.Embed(
             description="Current queue:",
@@ -277,6 +299,7 @@ class Music(commands.Cog):
 
     @commands.command()
     async def clear(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used clear in {ctx.guild.name}")
         p = self.players.get(ctx.guild.id)
         if not p:
             await ctx.message.add_reaction("✅")
@@ -292,6 +315,7 @@ class Music(commands.Cog):
 
     @commands.command()
     async def shuffle(self, ctx: commands.Context):
+        logger.info(f"{ctx.author.name} used shuffle in {ctx.guild.name}")
         player = self.players.get(ctx.guild.id)
         if not player:
             await ctx.message.add_reaction("✅")
@@ -309,6 +333,7 @@ class Music(commands.Cog):
 
     @commands.command()
     async def remove(self, ctx: commands.Context, idx: int):
+        logger.info(f"{ctx.author.name} used remove in {ctx.guild.name}")
         if idx < 1:
             raise commands.CommandError("Index must be >= 1.")
         p = self.players.get(ctx.guild.id)
@@ -332,6 +357,7 @@ def main():
     token = os.getenv("DISCORD_TOKEN")
     intents = discord.Intents.default()
     intents.message_content = True
+    intents.voice_states = True
     bot = commands.Bot(intents=intents, command_prefix=commands.when_mentioned_or("!"))
 
     @bot.check
@@ -342,7 +368,7 @@ def main():
     async def setup_hook():
         await bot.add_cog(Music(bot))
 
-    bot.run(token)
+    bot.run(token, log_handler=None)
 
 
 if __name__ == "__main__":
