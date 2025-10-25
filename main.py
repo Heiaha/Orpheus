@@ -331,6 +331,10 @@ def main():
     intents.message_content = True
     bot = commands.Bot(intents=intents, command_prefix=commands.when_mentioned_or("!"))
 
+    @bot.check
+    async def message_check(ctx: commands.Context):
+        return ctx.channel.name == "orpheus" and ctx.message.guild is not None
+
     @bot.event
     async def setup_hook():
         await bot.add_cog(Music(bot))
