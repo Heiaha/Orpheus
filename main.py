@@ -113,11 +113,12 @@ class Song:
 
 
 class Player:
-    """Manages playback for a guild."""
+    """Manages playback for a guild or group DM."""
 
     def __init__(self, ctx: commands.Context):
         self.bot = ctx.bot
         self.guild = ctx.guild
+        self.channel_id = ctx.channel.id  # Track by channel for group DMs
         self.voice_client: discord.VoiceClient | None = ctx.voice_client
         self.queue: asyncio.Queue[Song] = asyncio.Queue()
         self.current: Song | None = None
@@ -253,6 +254,10 @@ class Music(commands.Cog):
         self.bot = bot
         self.players: dict[int, Player] = {}
 
+    def _get_player_key(self, ctx: commands.Context) -> int:
+        """Get the player key for the current context (guild or channel ID)."""
+        return ctx.guild.id if ctx.guild else ctx.channel.id
+
     async def ensure_voice(self, ctx: commands.Context):
         """Ensure bot is in the same voice channel as the user."""
         if not ctx.author.voice:
@@ -264,12 +269,14 @@ class Music(commands.Cog):
             await ctx.voice_client.move_to(ctx.author.voice.channel)
 
         # Update player's voice client reference
-        player = self.players.setdefault(ctx.guild.id, Player(ctx))
+        player_key = self._get_player_key(ctx)
+        player = self.players.setdefault(player_key, Player(ctx))
         player.voice_client = ctx.voice_client
 
     def get_or_create_player(self, ctx: commands.Context) -> Player:
         """Get existing player or create new one."""
-        player = self.players.setdefault(ctx.guild.id, Player(ctx))
+        player_key = self._get_player_key(ctx)
+        player = self.players.setdefault(player_key, Player(ctx))
         player.voice_client = ctx.voice_client
         return player
 
@@ -317,7 +324,8 @@ class Music(commands.Cog):
     async def skip(self, ctx: commands.Context):
         """Skip the current song."""
         logger.info(f"{ctx.author.name} used skip")
-        player = self.players.get(ctx.guild.id)
+        player_key = self._get_player_key(ctx)
+        player = self.players.get(player_key)
         if player:
             player.skip()
         await ctx.message.add_reaction("⏭️")
@@ -326,7 +334,8 @@ class Music(commands.Cog):
     async def stop(self, ctx: commands.Context):
         """Stop playback and disconnect."""
         logger.info(f"{ctx.author.name} used stop")
-        player = self.players.pop(ctx.guild.id, None)
+        player_key = self._get_player_key(ctx)
+        player = self.players.pop(player_key, None)
         if player:
             player.cancel()
         if ctx.voice_client:
@@ -337,7 +346,8 @@ class Music(commands.Cog):
     async def show_queue(self, ctx: commands.Context, page: int = 1):
         """Show the current queue."""
         logger.info(f"{ctx.author.name} used queue")
-        player = self.players.get(ctx.guild.id)
+        player_key = self._get_player_key(ctx)
+        player = self.players.get(player_key)
 
         # Base embed
         embed = discord.Embed(
@@ -383,7 +393,8 @@ class Music(commands.Cog):
     async def clear(self, ctx: commands.Context):
         """Clear the queue."""
         logger.info(f"{ctx.author.name} used clear")
-        player = self.players.get(ctx.guild.id)
+        player_key = self._get_player_key(ctx)
+        player = self.players.get(player_key)
         if player:
             player.clear_queue()
         await ctx.message.add_reaction("✅")
@@ -392,7 +403,8 @@ class Music(commands.Cog):
     async def shuffle(self, ctx: commands.Context):
         """Shuffle the queue."""
         logger.info(f"{ctx.author.name} used shuffle")
-        player = self.players.get(ctx.guild.id)
+        player_key = self._get_player_key(ctx)
+        player = self.players.get(player_key)
         if player:
             player.shuffle_queue()
         await ctx.message.add_reaction("✅")
@@ -404,7 +416,8 @@ class Music(commands.Cog):
         if idx < 1:
             raise commands.CommandError("Index must be >= 1.")
 
-        player = self.players.get(ctx.guild.id)
+        player_key = self._get_player_key(ctx)
+        player = self.players.get(player_key)
         if player:
             player.remove_from_queue(idx)
         await ctx.message.add_reaction("✅")
@@ -427,7 +440,10 @@ def main():
 
     @bot.check
     async def message_check(ctx: commands.Context):
-        """Only respond in #orpheus channel."""
+        # Allow in group DMs (private channels with multiple recipients)
+        if isinstance(ctx.channel, discord.GroupChannel):
+            return True
+        # Allow in guild channels named "orpheus"
         return ctx.channel.name == "orpheus" and ctx.message.guild is not None
 
     @bot.event
