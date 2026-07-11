@@ -24,11 +24,8 @@ load_dotenv()
 # Constants
 YTDL_OPTS = {
     "format": "bestaudio/best",
-    "restrictfilenames": True,
     "noplaylist": True,
     "nocheckcertificate": True,
-    "ignoreerrors": False,
-    "logtostderr": False,
     "quiet": True,
     "no_warnings": True,
     "default_search": "auto",
@@ -161,7 +158,6 @@ class Player:
     def __init__(self, ctx: commands.Context):
         self.bot = ctx.bot
         self.guild = ctx.guild
-        self.channel_id = ctx.channel.id  # Track by channel for group DMs
         self.voice_client: discord.VoiceClient | None = ctx.voice_client
         self.songs: collections.deque[Song] = collections.deque()
         self.current: Song | None = None
@@ -333,8 +329,7 @@ class Music(commands.Cog):
     async def skip(self, ctx: commands.Context):
         """Skip the current song."""
         logger.info(f"{ctx.author.name} used skip")
-        player_key = self._get_player_key(ctx)
-        player = self.players.get(player_key)
+        player = self.players.get(self._get_player_key(ctx))
         if player:
             player.skip()
         await ctx.message.add_reaction("⏭️")
@@ -343,8 +338,7 @@ class Music(commands.Cog):
     async def stop(self, ctx: commands.Context):
         """Stop playback and disconnect."""
         logger.info(f"{ctx.author.name} used stop")
-        player_key = self._get_player_key(ctx)
-        player = self.players.pop(player_key, None)
+        player = self.players.pop(self._get_player_key(ctx), None)
         if player:
             player.cancel()
         if ctx.voice_client:
@@ -355,19 +349,17 @@ class Music(commands.Cog):
     async def show_queue(self, ctx: commands.Context, page: int = 1):
         """Show the current queue."""
         logger.info(f"{ctx.author.name} used queue")
-        player_key = self._get_player_key(ctx)
-        player = self.players.get(player_key)
+        player = self.players.get(self._get_player_key(ctx))
 
-        # Base embed
-        embed = discord.Embed(
-            description="Current queue:",
-            timestamp=discord.utils.utcnow(),
-            color=EMBED_COLOR,
-        )
-
-        # Show current song if playing
+        # Show current song if playing, otherwise a base embed
         if player and player.current:
             embed = player.current.create_embed("playing", self.bot.user)
+        else:
+            embed = discord.Embed(
+                description="Current queue:",
+                timestamp=discord.utils.utcnow(),
+                color=EMBED_COLOR,
+            )
 
         # Get queue items
         items = list(player.songs) if player else []
@@ -397,8 +389,7 @@ class Music(commands.Cog):
     async def clear(self, ctx: commands.Context):
         """Clear the queue."""
         logger.info(f"{ctx.author.name} used clear")
-        player_key = self._get_player_key(ctx)
-        player = self.players.get(player_key)
+        player = self.players.get(self._get_player_key(ctx))
         if player:
             player.clear_queue()
         await ctx.message.add_reaction("✅")
@@ -407,8 +398,7 @@ class Music(commands.Cog):
     async def shuffle(self, ctx: commands.Context):
         """Shuffle the queue."""
         logger.info(f"{ctx.author.name} used shuffle")
-        player_key = self._get_player_key(ctx)
-        player = self.players.get(player_key)
+        player = self.players.get(self._get_player_key(ctx))
         if player:
             player.shuffle_queue()
         await ctx.message.add_reaction("✅")
@@ -420,8 +410,7 @@ class Music(commands.Cog):
         if idx < 1:
             raise commands.CommandError("Index must be >= 1.")
 
-        player_key = self._get_player_key(ctx)
-        player = self.players.get(player_key)
+        player = self.players.get(self._get_player_key(ctx))
         if player:
             player.remove_from_queue(idx)
         await ctx.message.add_reaction("✅")
