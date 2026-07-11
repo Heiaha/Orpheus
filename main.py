@@ -57,12 +57,46 @@ def clean_yt_watch_url(url: str) -> str:
     return url
 
 
+class YTDLOpusAudio(discord.FFmpegOpusAudio):
+    """FFmpegOpusAudio fed by a yt-dlp downloader subprocess.
+
+    YouTube serves a single long-lived GET (what ffmpeg does with a bare URL)
+    below realtime, but serves ranged chunks at full speed, so yt-dlp does the
+    downloading and pipes the bytes to ffmpeg.
+    """
+
+    def __init__(self, data: dict, query: str):
+        self.proc = subprocess.Popen(
+            [
+                "yt-dlp", "-q", "--no-warnings", "--no-playlist", "--no-cache-dir",
+                "-f", f"{data.get('format_id') or 'bestaudio'}/bestaudio/best",
+                "--http-chunk-size", "10M",
+                "-o", "-",
+                data.get("webpage_url") or query,
+            ],
+            stdout=subprocess.PIPE,
+        )
+        codec = "copy" if (data.get("acodec") or "").startswith("opus") else "libopus"
+        try:
+            super().__init__(self.proc.stdout, pipe=True, codec=codec, options="-vn")
+        except Exception:
+            self.proc.kill()
+            self.proc.wait()
+            raise
+
+    def cleanup(self) -> None:
+        """Stop the downloader along with ffmpeg."""
+        self.proc.kill()
+        self.proc.wait()
+        super().cleanup()
+
+
 class Song:
     """Represents a song with metadata and audio source."""
 
-    __slots__ = ("title", "url", "thumbnail", "duration", "requester", "channel", "source", "proc")
+    __slots__ = ("title", "url", "thumbnail", "duration", "requester", "channel", "source")
 
-    def __init__(self, ctx: commands.Context, data: dict, src: discord.AudioSource, proc: subprocess.Popen):
+    def __init__(self, ctx: commands.Context, data: dict, src: discord.AudioSource):
         self.title = data.get("title")
         self.url = data.get("webpage_url")
         self.thumbnail = data.get("thumbnail")
@@ -70,13 +104,9 @@ class Song:
         self.requester = ctx.author
         self.channel = ctx.channel
         self.source = src
-        self.proc = proc
 
     def destroy(self):
-        """Stop the downloader and ffmpeg for a song that finished or will never play."""
-        if self.proc:
-            self.proc.kill()
-            self.proc.wait()
+        """Release the audio pipeline of a song that will never be played."""
         self.source.cleanup()
 
     @classmethod
@@ -98,22 +128,8 @@ class Song:
         if data.get("is_live"):
             raise commands.CommandError("Live streams are not supported.")
 
-        # YouTube serves a single long-lived GET (what ffmpeg does with a bare
-        # URL) below realtime, but serves ranged chunks at full speed. Download
-        # with yt-dlp (which uses ranged chunks) and pipe the bytes to ffmpeg.
-        proc = subprocess.Popen(
-            [
-                "yt-dlp", "-q", "--no-warnings", "--no-playlist", "--no-cache-dir",
-                "-f", f"{data.get('format_id') or 'bestaudio'}/bestaudio/best",
-                "--http-chunk-size", "10M",
-                "-o", "-",
-                data.get("webpage_url") or query,
-            ],
-            stdout=subprocess.PIPE,
-        )
-        codec = "copy" if (data.get("acodec") or "").startswith("opus") else "libopus"
-        src = discord.FFmpegOpusAudio(proc.stdout, pipe=True, codec=codec, options="-vn")
-        return cls(ctx, data, src, proc)
+        src = YTDLOpusAudio(data, query)
+        return cls(ctx, data, src)
 
     def create_embed(self, state: str, bot_user: discord.User | None = None) -> discord.Embed:
         """Create a Discord embed for this song."""
@@ -182,8 +198,6 @@ class Player:
         """Callback after song finishes playing."""
         if err:
             logger.error(f"Playback error: {err}")
-        if self.current:
-            self.current.destroy()
         self.current = None
         self.bot.loop.call_soon_threadsafe(self._next.set)
 
@@ -217,10 +231,7 @@ class Player:
 
     def stop(self):
         """Stop playback and clear current song."""
-        song = self.current
         self.skip()
-        if song:
-            song.destroy()
         self.current = None
 
     def cancel(self):
