@@ -3,8 +3,13 @@ services:
     build: .
     environment:
       DISCORD_FORCE_IPV4: "1"
+      # Print native-crash tracebacks (SIGSEGV/SIGABRT) to stderr -> docker logs
+      PYTHONFAULTHANDLER: "1"
     container_name: orpheus
     env_file: .env
+    # tini as PID 1: forwards SIGTERM to python so stops are instant instead of
+    # being ignored (PID-1 signal immunity) and SIGKILLed after 10s
+    init: true
     restart: unless-stopped
     read_only: true
     tmpfs:

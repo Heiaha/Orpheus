@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import random
+import subprocess
 from urllib.parse import urlparse, parse_qs
 
 import discord
@@ -32,7 +33,6 @@ YTDL_OPTS = {
     "default_search": "auto",
     "source_address": "0.0.0.0",
 }
-FFMPEG_BEFORE = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 EMBED_COLOR = 0xA84300
 IDLE_TIMEOUT = 600  # seconds
 
@@ -60,9 +60,9 @@ def clean_yt_watch_url(url: str) -> str:
 class Song:
     """Represents a song with metadata and audio source."""
 
-    __slots__ = ("title", "url", "thumbnail", "duration", "requester", "channel", "source")
+    __slots__ = ("title", "url", "thumbnail", "duration", "requester", "channel", "source", "proc")
 
-    def __init__(self, ctx: commands.Context, data: dict, src: discord.AudioSource):
+    def __init__(self, ctx: commands.Context, data: dict, src: discord.AudioSource, proc: subprocess.Popen):
         self.title = data.get("title")
         self.url = data.get("webpage_url")
         self.thumbnail = data.get("thumbnail")
@@ -70,6 +70,14 @@ class Song:
         self.requester = ctx.author
         self.channel = ctx.channel
         self.source = src
+        self.proc = proc
+
+    def destroy(self):
+        """Stop the downloader and ffmpeg for a song that finished or will never play."""
+        if self.proc:
+            self.proc.kill()
+            self.proc.wait()
+        self.source.cleanup()
 
     @classmethod
     async def from_search(cls, ctx: commands.Context, query: str) -> "Song":
@@ -90,10 +98,22 @@ class Song:
         if data.get("is_live"):
             raise commands.CommandError("Live streams are not supported.")
 
-        src = await discord.FFmpegOpusAudio.from_probe(
-            data["url"], before_options=FFMPEG_BEFORE, options="-vn"
+        # YouTube serves a single long-lived GET (what ffmpeg does with a bare
+        # URL) below realtime, but serves ranged chunks at full speed. Download
+        # with yt-dlp (which uses ranged chunks) and pipe the bytes to ffmpeg.
+        proc = subprocess.Popen(
+            [
+                "yt-dlp", "-q", "--no-warnings", "--no-playlist", "--no-cache-dir",
+                "-f", f"{data.get('format_id') or 'bestaudio'}/bestaudio/best",
+                "--http-chunk-size", "10M",
+                "-o", "-",
+                data.get("webpage_url") or query,
+            ],
+            stdout=subprocess.PIPE,
         )
-        return cls(ctx, data, src)
+        codec = "copy" if (data.get("acodec") or "").startswith("opus") else "libopus"
+        src = discord.FFmpegOpusAudio(proc.stdout, pipe=True, codec=codec, options="-vn")
+        return cls(ctx, data, src, proc)
 
     def create_embed(self, state: str, bot_user: discord.User | None = None) -> discord.Embed:
         """Create a Discord embed for this song."""
@@ -162,6 +182,8 @@ class Player:
         """Callback after song finishes playing."""
         if err:
             logger.error(f"Playback error: {err}")
+        if self.current:
+            self.current.destroy()
         self.current = None
         self.bot.loop.call_soon_threadsafe(self._next.set)
 
@@ -173,11 +195,14 @@ class Player:
 
     def _cleanup(self):
         """Clean up player state."""
+        if self.current:
+            self.current.destroy()
         self.current = None
         while not self.queue.empty():
             try:
-                self.queue.get_nowait()
+                song = self.queue.get_nowait()
                 self.queue.task_done()
+                song.destroy()
             except asyncio.QueueEmpty:
                 break
 
@@ -192,7 +217,10 @@ class Player:
 
     def stop(self):
         """Stop playback and clear current song."""
+        song = self.current
         self.skip()
+        if song:
+            song.destroy()
         self.current = None
 
     def cancel(self):
@@ -214,12 +242,14 @@ class Player:
                 self.queue.put_nowait(song)
         return items
 
-    def clear_queue(self):
-        """Remove all songs from the queue."""
+    def clear_queue(self, *, destroy: bool = False):
+        """Remove all songs from the queue, optionally stopping their downloads."""
         try:
             while True:
-                self.queue.get_nowait()
+                song = self.queue.get_nowait()
                 self.queue.task_done()
+                if destroy:
+                    song.destroy()
         except asyncio.QueueEmpty:
             pass
 
@@ -237,7 +267,8 @@ class Player:
         self.clear_queue()
 
         if 1 <= idx <= len(items):
-            del items[idx - 1]
+            removed = items.pop(idx - 1)
+            removed.destroy()
             for song in items:
                 self.queue.put_nowait(song)
             return True
@@ -396,7 +427,7 @@ class Music(commands.Cog):
         player_key = self._get_player_key(ctx)
         player = self.players.get(player_key)
         if player:
-            player.clear_queue()
+            player.clear_queue(destroy=True)
         await ctx.message.add_reaction("✅")
 
     @commands.command()
