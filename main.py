@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import logging
 import math
 import os
@@ -55,6 +56,12 @@ def clean_yt_watch_url(url: str) -> str:
         if v:
             return f"https://www.youtube.com/watch?v={v}"
     return url
+
+
+def apply_footer(embed: discord.Embed, text: str, user: discord.User | None) -> discord.Embed:
+    """Set an embed footer, with the user's avatar when available."""
+    embed.set_footer(text=text, icon_url=user.avatar.url if user and user.avatar else None)
+    return embed
 
 
 class YTDLOpusAudio(discord.FFmpegOpusAudio):
@@ -142,8 +149,8 @@ class Song:
         embed.add_field(name="Requested by", value=self.requester.mention)
         embed.set_thumbnail(url=self.thumbnail)
 
-        if bot_user and bot_user.avatar:
-            embed.set_footer(text=bot_user.display_name, icon_url=bot_user.avatar.url)
+        if bot_user:
+            apply_footer(embed, bot_user.display_name, bot_user)
 
         return embed
 
@@ -156,8 +163,9 @@ class Player:
         self.guild = ctx.guild
         self.channel_id = ctx.channel.id  # Track by channel for group DMs
         self.voice_client: discord.VoiceClient | None = ctx.voice_client
-        self.queue: asyncio.Queue[Song] = asyncio.Queue()
+        self.songs: collections.deque[Song] = collections.deque()
         self.current: Song | None = None
+        self._song_added = asyncio.Event()
         self._next = asyncio.Event()
         self.task: asyncio.Task | None = None
 
@@ -172,11 +180,14 @@ class Player:
                 self._next.clear()
 
                 # Wait for next song or timeout
-                try:
-                    self.current = await asyncio.wait_for(self.queue.get(), timeout=IDLE_TIMEOUT)
-                except asyncio.TimeoutError:
-                    await self._disconnect_idle()
-                    return
+                while not self.songs:
+                    self._song_added.clear()
+                    try:
+                        await asyncio.wait_for(self._song_added.wait(), timeout=IDLE_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        await self._disconnect_idle()
+                        return
+                self.current = self.songs.popleft()
 
                 # Announce song
                 await self.current.channel.send(
@@ -212,17 +223,12 @@ class Player:
         if self.current:
             self.current.destroy()
         self.current = None
-        while not self.queue.empty():
-            try:
-                song = self.queue.get_nowait()
-                self.queue.task_done()
-                song.destroy()
-            except asyncio.QueueEmpty:
-                break
+        self.clear_queue()
 
-    async def add(self, song: Song):
+    def add(self, song: Song):
         """Add a song to the queue."""
-        await self.queue.put(song)
+        self.songs.append(song)
+        self._song_added.set()
 
     def skip(self):
         """Skip the current song."""
@@ -240,53 +246,23 @@ class Player:
         if self.task and not self.task.done():
             self.task.cancel()
 
-    def get_queue_snapshot(self) -> list[Song]:
-        """Get a snapshot of the queue without modifying it."""
-        items = []
-        try:
-            while True:
-                items.append(self.queue.get_nowait())
-        except asyncio.QueueEmpty:
-            pass
-        finally:
-            for song in items:
-                self.queue.put_nowait(song)
-        return items
-
-    def clear_queue(self, *, destroy: bool = False):
-        """Remove all songs from the queue, optionally stopping their downloads."""
-        try:
-            while True:
-                song = self.queue.get_nowait()
-                self.queue.task_done()
-                if destroy:
-                    song.destroy()
-        except asyncio.QueueEmpty:
-            pass
+    def clear_queue(self):
+        """Remove all songs from the queue and stop their downloads."""
+        while self.songs:
+            self.songs.popleft().destroy()
 
     def shuffle_queue(self):
         """Shuffle the queue."""
-        items = self.get_queue_snapshot()
-        self.clear_queue()
-        random.shuffle(items)
-        for song in items:
-            self.queue.put_nowait(song)
+        random.shuffle(self.songs)
 
     def remove_from_queue(self, idx: int) -> bool:
         """Remove a song from the queue by index (1-based)."""
-        items = self.get_queue_snapshot()
-        self.clear_queue()
-
-        if 1 <= idx <= len(items):
-            removed = items.pop(idx - 1)
-            removed.destroy()
-            for song in items:
-                self.queue.put_nowait(song)
-            return True
-
-        for song in items:
-            self.queue.put_nowait(song)
-        return False
+        if not 1 <= idx <= len(self.songs):
+            return False
+        song = self.songs[idx - 1]
+        del self.songs[idx - 1]
+        song.destroy()
+        return True
 
 
 class Music(commands.Cog):
@@ -300,8 +276,8 @@ class Music(commands.Cog):
         """Get the player key for the current context (guild or channel ID)."""
         return ctx.guild.id if ctx.guild else ctx.channel.id
 
-    async def ensure_voice(self, ctx: commands.Context):
-        """Ensure bot is in the same voice channel as the user."""
+    async def ensure_voice(self, ctx: commands.Context) -> Player:
+        """Ensure bot is in the same voice channel as the user and return the player."""
         if not ctx.author.voice:
             raise commands.CommandError("Connect to a voice channel first.")
 
@@ -310,15 +286,7 @@ class Music(commands.Cog):
         elif ctx.voice_client.channel != ctx.author.voice.channel:
             await ctx.voice_client.move_to(ctx.author.voice.channel)
 
-        # Update player's voice client reference
-        player_key = self._get_player_key(ctx)
-        player = self.players.setdefault(player_key, Player(ctx))
-        player.voice_client = ctx.voice_client
-
-    def get_or_create_player(self, ctx: commands.Context) -> Player:
-        """Get existing player or create new one."""
-        player_key = self._get_player_key(ctx)
-        player = self.players.setdefault(player_key, Player(ctx))
+        player = self.players.setdefault(self._get_player_key(ctx), Player(ctx))
         player.voice_client = ctx.voice_client
         return player
 
@@ -333,11 +301,10 @@ class Music(commands.Cog):
     async def play(self, ctx: commands.Context, *, query: str):
         """Play a song from YouTube or add it to the queue."""
         logger.info(f"{ctx.author.name} used play: {query!r}")
-        await self.ensure_voice(ctx)
+        player = await self.ensure_voice(ctx)
 
         song = await Song.from_search(ctx, query)
-        player = self.get_or_create_player(ctx)
-        await player.add(song)
+        player.add(song)
 
         if not player.task or player.task.done():
             player.start()
@@ -403,7 +370,7 @@ class Music(commands.Cog):
             embed = player.current.create_embed("playing", self.bot.user)
 
         # Get queue items
-        items = player.get_queue_snapshot() if player else []
+        items = list(player.songs) if player else []
 
         if not items:
             await ctx.reply(embed=embed)
@@ -422,12 +389,7 @@ class Music(commands.Cog):
         ]
 
         embed.add_field(name="Up next", value="\n".join(lines), inline=False)
-
-        footer_text = f"Page {page}/{pages}"
-        if self.bot.user and self.bot.user.avatar:
-            embed.set_footer(text=footer_text, icon_url=self.bot.user.avatar.url)
-        else:
-            embed.set_footer(text=footer_text)
+        apply_footer(embed, f"Page {page}/{pages}", self.bot.user)
 
         await ctx.reply(embed=embed)
 
@@ -438,7 +400,7 @@ class Music(commands.Cog):
         player_key = self._get_player_key(ctx)
         player = self.players.get(player_key)
         if player:
-            player.clear_queue(destroy=True)
+            player.clear_queue()
         await ctx.message.add_reaction("✅")
 
     @commands.command()
@@ -486,7 +448,7 @@ def main():
         if isinstance(ctx.channel, discord.GroupChannel):
             return True
         # Allow in guild channels named "orpheus"
-        return ctx.channel.name == "orpheus" and ctx.message.guild is not None
+        return ctx.guild is not None and ctx.channel.name == "orpheus"
 
     @bot.event
     async def setup_hook():
